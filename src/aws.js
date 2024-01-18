@@ -1,23 +1,24 @@
 const AWS = require('aws-sdk');
 const core = require('@actions/core');
 const config = require('./config');
+const { concat } = require('lodash');
 
 // User data scripts are run as the root user
 function buildUserDataScript(githubRegistrationToken, label) {
+  let preScript;
   if (config.input.runnerHomeDir) {
     // If runner home directory is specified, we expect the actions-runner software (and dependencies)
     // to be pre-installed in the AMI, so we simply cd into that directory and then start the runner
-    return [
+    core.info(`Preinstalled runner from HomeDir ${config.input.runnerHomeDir}`);
+    preScript = [
       '#!/bin/bash',
       `cd "${config.input.runnerHomeDir}"`,
       `echo "${config.input.preRunnerScript}" > pre-runner-script.sh`,
       'source pre-runner-script.sh',
-      'export RUNNER_ALLOW_RUNASROOT=1',
-      `./config.sh --url https://github.com/${config.githubContext.owner}/${config.githubContext.repo} --token ${githubRegistrationToken} --labels ${label}`,
-      './run.sh',
     ];
   } else {
-    return [
+    core.info(`The runner will be downloaded.`);
+    preScript = [
       '#!/bin/bash',
       'mkdir actions-runner && cd actions-runner',
       `echo "${config.input.preRunnerScript}" > pre-runner-script.sh`,
@@ -25,11 +26,15 @@ function buildUserDataScript(githubRegistrationToken, label) {
       'case $(uname -m) in aarch64) ARCH="arm64" ;; amd64|x86_64) ARCH="x64" ;; esac && export RUNNER_ARCH=${ARCH}',
       'curl -O -L https://github.com/actions/runner/releases/download/v2.299.1/actions-runner-linux-${RUNNER_ARCH}-2.299.1.tar.gz',
       'tar xzf ./actions-runner-linux-${RUNNER_ARCH}-2.299.1.tar.gz',
-      'export RUNNER_ALLOW_RUNASROOT=1',
-      `./config.sh --url https://github.com/${config.githubContext.owner}/${config.githubContext.repo} --token ${githubRegistrationToken} --labels ${label}`,
-      './run.sh',
     ];
   }
+  const url = new URL(config.githubUrl);
+  const configScript = [
+    'export RUNNER_ALLOW_RUNASROOT=1',
+    `echo default | ./config.sh --url ${url.protocol}//${url.host}/${config.githubContext.owner}/${config.githubContext.repo} --token ${githubRegistrationToken} --labels ${label} --unattended`,
+    './run.sh',
+  ];
+  return concat(preScript, configScript);
 }
 
 async function startEc2Instance(label, githubRegistrationToken) {
